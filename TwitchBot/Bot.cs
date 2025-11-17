@@ -118,6 +118,13 @@ namespace TwitchBot
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
+            double result = 0;
+            for (int i = 0; i < 1000; i++)
+            {
+                result += Games.Roll();   
+            }
+            Console.WriteLine(result);
+
             while (!stoppingToken.IsCancellationRequested)
             {
                 if(_client.IsConnected)
@@ -131,7 +138,7 @@ namespace TwitchBot
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
 
-            _logger.Info("Bot is stopping.");
+            _logger.Info("Bot is stopping...");
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)
@@ -167,15 +174,25 @@ namespace TwitchBot
 
         async Task Client_OnChatCommandReceived(object? sender, OnChatCommandReceivedArgs e)
         {
-            if(e.Command.Name == "roll")
+            switch (e.Command.Name)
             {
-                int result = Games.Roll();
-                _logger.Info($"rolled: {result}");
-                sqliteDataLayer.UpdateUsers(e.ChatMessage.Username, result);
+                case "roll":
+                    double result = Games.Roll();
+                    _logger.Info($"rolled: {result}");
+                    sqliteDataLayer.UpdateUsers(e.ChatMessage.Username, result);
 
-                await _client.SendMessageAsync(e.ChatMessage.Channel, $"Выигрыш {result}!");
+                    await _client.SendMessageAsync(e.ChatMessage.Channel, $"Выигрыш {result}!");
+                    break;
+
+                case "balance":
+                    float balance = sqliteDataLayer.GetBalance(e.ChatMessage.Username);
+                    await _client.SendMessageAsync(e.ChatMessage.Channel, $"@{e.ChatMessage.Username} ваш баланс = {balance}!");
+                    break;
+
+                default:
+                    break;
             }
-            _logger.Info($"{e.Command}");
+                _logger.Info($"{e.Command}");
         }
 
         async Task Every10SecAsync(string channel, CancellationToken cancellationToken)
