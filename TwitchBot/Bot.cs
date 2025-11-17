@@ -1,4 +1,5 @@
-﻿using System.Diagnostics;
+﻿using Microsoft.Extensions.Logging;
+using System.Diagnostics;
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
@@ -16,15 +17,13 @@ namespace TwitchBot
         HttpListener _listener;
         AuthSettings authSettings;
         string settingsPath = $"{AppDomain.CurrentDomain.BaseDirectory}AuthSettings.json";
-        
 
-        private readonly ILogger<Bot> _logger;
+        private readonly NLog.Logger _logger = NLog.LogManager.GetCurrentClassLogger();
 
         private readonly TwitchLib.Client.TwitchClient _client;
 
-        public Bot(ILogger<Bot> logger)
+        public Bot()
         {
-            _logger = logger;
             _client = new TwitchLib.Client.TwitchClient();
             _httpClient = new HttpClient();
             _listener = new HttpListener();
@@ -106,13 +105,13 @@ namespace TwitchBot
             }
             catch (Exception ex)
             {
-                _logger.LogCritical(ex.Message);
+                _logger.Error(ex.Message);
             }
 
             await Task.Delay(1000, cancellationToken);
             await base.StartAsync(cancellationToken);
 
-            _logger.LogInformation("Bot has started.");
+            _logger.Info("Bot has started.");
 
             _ = Every10SecAsync(authSettings.Username, cancellationToken);
         }
@@ -122,22 +121,22 @@ namespace TwitchBot
             while (!stoppingToken.IsCancellationRequested)
             {
                 if(_client.IsConnected)
-                    _logger.LogInformation("Bot is alive at: {time}", DateTimeOffset.Now);
+                    _logger.Info("Bot is alive at: {time}", DateTimeOffset.Now);
                 else
                 {
-                    _logger.LogError("Bot down at: {time}", DateTimeOffset.Now);
+                    _logger.Info("Bot down at: {time}", DateTimeOffset.Now);
                     break;
                 }
                     
                 await Task.Delay(TimeSpan.FromMinutes(5), stoppingToken);
             }
 
-            _logger.LogInformation("Bot is stopping.");
+            _logger.Info("Bot is stopping.");
         }
 
         public override async Task StopAsync(CancellationToken cancellationToken)
         {
-            _logger.LogInformation("Bot is stopping...");
+            _logger.Info("Bot is stopping...");
 
             await _client.DisconnectAsync();
             _listener.Stop();
@@ -147,7 +146,7 @@ namespace TwitchBot
 
             await base.StopAsync(cancellationToken);
 
-            _logger.LogInformation("Bot has stopped.");
+            _logger.Info("Bot has stopped.");
         }
 
         async Task Client_OnConnected(object? sender, OnConnectedEventArgs e)
@@ -157,27 +156,26 @@ namespace TwitchBot
 
         async Task Client_OnJoinedChannel(object? sender, OnJoinedChannelArgs e)
         {
-            Console.WriteLine($"Connected to {e.Channel}");
+            _logger.Info($"Connected to {e.Channel}");
             await _client.SendMessageAsync(e.Channel, "buh");
         }
 
         async Task Client_OnMessageReceived(object? sender, OnMessageReceivedArgs e)
         {
-            if(e.ChatMessage.Message.StartsWith("!roll"))
-            {
-                int result = Games.Roll();
-                Console.WriteLine($"rolled: {result}");
-                sqliteDataLayer.UpdateUsers(e.ChatMessage.Username, result);
-
-                await _client.SendMessageAsync(e.ChatMessage.Channel, $"Выигрыш {result}!");
-            }
-            
-            Console.WriteLine($"{e.ChatMessage.Username} # {e.ChatMessage.Channel}: {e.ChatMessage.Message}");
+            _logger.Info($"{e.ChatMessage.Username} # {e.ChatMessage.Channel}: {e.ChatMessage.Message}");
         }
 
         async Task Client_OnChatCommandReceived(object? sender, OnChatCommandReceivedArgs e)
         {
-            Console.WriteLine(e.Command);
+            if(e.Command.Name == "roll")
+            {
+                int result = Games.Roll();
+                _logger.Info($"rolled: {result}");
+                sqliteDataLayer.UpdateUsers(e.ChatMessage.Username, result);
+
+                await _client.SendMessageAsync(e.ChatMessage.Channel, $"Выигрыш {result}!");
+            }
+            _logger.Info($"{e.Command}");
         }
 
         async Task Every10SecAsync(string channel, CancellationToken cancellationToken)
@@ -185,7 +183,7 @@ namespace TwitchBot
             while (!cancellationToken.IsCancellationRequested)
             {
                 await _client.SendMessageAsync(channel, "10 сек");
-                Console.WriteLine($"{channel}: 10 сек");
+                _logger.Info($"{channel}: 10 сек");
                 await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
             }
         }

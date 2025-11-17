@@ -7,6 +7,7 @@ namespace TwitchBot.DB
     public class SqliteDataLayer : IDisposable
     {
         private bool disposed = false;
+        private readonly NLog.Logger _logger = NLog.LogManager.GetCurrentClassLogger();
 
         string connectionString = $"Data Source={AppDomain.CurrentDomain.BaseDirectory}usersdata.db;";
         SqliteConnection connection;
@@ -16,7 +17,7 @@ namespace TwitchBot.DB
             connection = new SqliteConnection(connectionString);
             connection.Open();
 
-            SqliteCommand command = new SqliteCommand();
+            SqliteCommand command = new();
             command.Connection = connection;
             command.CommandText = "CREATE TABLE IF NOT EXISTS Users(user_id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT UNIQUE, username TEXT NOT NULL UNIQUE, coins INTEGER NULL)";
             command.ExecuteNonQuery();
@@ -24,17 +25,22 @@ namespace TwitchBot.DB
 
         public void UpdateUsers(string username, int coins)
         {
-            SqliteCommand command = new SqliteCommand();
+            SqliteCommand command = new();
             command.Connection = connection;
             try
             {
-                command.CommandText = $"INSERT INTO Users (username, coins) VALUES ('{username}', {coins}) ON CONFLICT(username) DO " +
+                command.CommandText = $"INSERT INTO Users (username, coins) ViALUES ('{username}', {coins}) ON CONFLICT(username) DO " +
                     $"UPDATE SET coins = coins + EXCLUDED.coins; ";
                 command.ExecuteNonQuery();
+                _logger.Info("user checked");
+            }
+            catch (SqliteException sqlex)
+            {
+                _logger.Error("Error adding info in database", sqlex);
             }
             catch (Exception ex) 
             {
-                Debug.WriteLine("Error adding info in database");
+                _logger.Error("Error", ex);
             }
             
         }
