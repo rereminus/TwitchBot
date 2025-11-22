@@ -9,7 +9,6 @@ namespace TwitchBot
         public static double Roll()
         {
             Random rnd = new Random();
-            //return rnd.Next(-1000, 1200);
 
             int chance = rnd.Next(1, 101);
             double result = 0;

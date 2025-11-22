@@ -40,7 +40,12 @@ namespace TwitchBot
                     {
                         ClientId = "example",
                         ClientSecret = "example",
-                        Username = "example"
+                        Username = "example",
+                        AccessToken = new()
+                        {
+                            Token = "",
+                            ExpireTime = DateTime.Now
+                        }
                     };
 
                     string jsonString = JsonSerializer.Serialize(authSettings);
@@ -54,53 +59,28 @@ namespace TwitchBot
                     authSettings = JsonSerializer.Deserialize<AuthSettings>(File.ReadAllText(settingsPath));
 
                     _listener.Prefixes.Add("http://localhost:7030/");
-                    _listener.Start();
 
-                    string authUrl = $"https://id.twitch.tv/oauth2/authorize?response_type=code&client_id={authSettings.ClientId}&redirect_uri=http://localhost:7030&scope=chat:read+chat:edit";
-                    var psi = new ProcessStartInfo(authUrl)
+                    if (authSettings.AccessToken == null || authSettings.AccessToken.ExpireTime < DateTime.Now)
                     {
-                        UseShellExecute = true
-                    };
+                        var accessToken = await GetAccessTokenAsync();
+                        authSettings.AccessToken = accessToken;
 
-                    Process.Start(psi);
-
-                    HttpListenerContext context = await _listener.GetContextAsync();
-                    string code = context.Request.QueryString["code"];
-
-                    Dictionary<string, string> values = new()
-                    {
-                        {"client_id", authSettings.ClientId},
-                        {"client_secret", authSettings.ClientSecret },
-                        {"code", code},
-                        {"grant_type", "authorization_code" },
-                        {"redirect_uri", "http://localhost:7030" }
-                     };
-
-                    var content = new FormUrlEncodedContent(values);
-
-                    var response = await _httpClient.PostAsync("https://id.twitch.tv/oauth2/token", content);
-                    string responseString = await response.Content.ReadAsStringAsync();
-
-                    using (JsonDocument document = JsonDocument.Parse(responseString))
-                    {
-                        JsonElement root = document.RootElement;
-                        if (root.TryGetProperty("access_token", out JsonElement access_tokenElement))
-                        {
-                            credentials = new ConnectionCredentials(authSettings.Username, access_tokenElement.GetString());
-                            _client.Initialize(credentials);
-
-                            _client.OnConnected += Client_OnConnected;
-                            _client.OnJoinedChannel += Client_OnJoinedChannel;
-                            _client.OnMessageReceived += Client_OnMessageReceived;
-                            _client.OnChatCommandReceived += Client_OnChatCommandReceived;
-
-                            await _client.ConnectAsync();
-                        }
-                        else
-                        {
-                            throw new Exception("Error receiving token. Bot is not running.");
-                        }
+                        string jsonString = JsonSerializer.Serialize(authSettings, new JsonSerializerOptions() { WriteIndented = true });
+                        File.WriteAllText(settingsPath, jsonString);
                     }
+
+                    credentials = new ConnectionCredentials(authSettings.Username, authSettings.AccessToken.Token);
+                    _client.Initialize(credentials);
+
+                    _client.OnConnected += Client_OnConnected;
+                    _client.OnJoinedChannel += Client_OnJoinedChannel;
+                    _client.OnMessageReceived += Client_OnMessageReceived;
+                    _client.OnChatCommandReceived += Client_OnChatCommandReceived;
+
+                    await _client.ConnectAsync();
+
+
+                    
                 }
             }
             catch (Exception ex)
@@ -118,13 +98,6 @@ namespace TwitchBot
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            double result = 0;
-            for (int i = 0; i < 1000; i++)
-            {
-                result += Games.Roll();   
-            }
-            Console.WriteLine(result);
-
             while (!stoppingToken.IsCancellationRequested)
             {
                 if(_client.IsConnected)
@@ -146,14 +119,71 @@ namespace TwitchBot
             _logger.Info("Bot is stopping...");
 
             await _client.DisconnectAsync();
-            _listener.Stop();
-            _listener.Close();
+
+            if (_listener.IsListening)
+            {
+                _listener.Stop();
+                _listener.Close();
+            }
+            
             _httpClient.Dispose();
             sqliteDataLayer.Dispose();
 
             await base.StopAsync(cancellationToken);
 
             _logger.Info("Bot has stopped.");
+        }
+
+        async Task<AccessToken?> GetAccessTokenAsync()
+        {
+            _listener.Start();
+
+            string authUrl = $"https://id.twitch.tv/oauth2/authorize?response_type=code&client_id={authSettings.ClientId}&redirect_uri=http://localhost:7030&scope=chat:read+chat:edit";
+            var psi = new ProcessStartInfo(authUrl)
+            {
+                UseShellExecute = true
+            };
+
+            Process.Start(psi);
+
+            HttpListenerContext context = await _listener.GetContextAsync();
+            string code = context.Request.QueryString["code"];
+
+            Dictionary<string, string> values = new()
+            {
+                {"client_id", authSettings.ClientId},
+                {"client_secret", authSettings.ClientSecret },
+                {"code", code},
+                {"grant_type", "authorization_code" },
+                {"redirect_uri", "http://localhost:7030" }
+            };
+
+            var content = new FormUrlEncodedContent(values);
+
+            var response = await _httpClient.PostAsync("https://id.twitch.tv/oauth2/token", content);
+            string responseString = await response.Content.ReadAsStringAsync();
+
+            _listener.Stop();
+
+            using (JsonDocument document = JsonDocument.Parse(responseString))
+            {
+                JsonElement root = document.RootElement;
+                if (root.TryGetProperty("access_token", out JsonElement access_tokenElement) &&
+                    (root.TryGetProperty("expires_in", out JsonElement expires_inElement)))
+                {
+                    AccessToken accessToken = new()
+                    {
+                        Token = access_tokenElement.GetString(),
+                        ExpireTime = DateTime.Now.AddSeconds(expires_inElement.GetInt32())
+                    }; 
+                    return accessToken;
+                }
+                else
+                {
+                    _logger.Error("Error receiving token. Bot is not running.");
+                    return null;
+                }
+            }
         }
 
         async Task Client_OnConnected(object? sender, OnConnectedEventArgs e)
